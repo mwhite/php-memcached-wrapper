@@ -21,7 +21,7 @@ class MemcachedWrapper implements ArrayAccess {
      * Memcached methods that take key(s) as arguments, and the argument 
      * position of those key(s).
      */
-    protected $methods = array(
+    protected $keyArgMethods = array(
         'add'           => 0,
         'addByKey'      => 1,
         'append'        => 0,
@@ -60,38 +60,64 @@ class MemcachedWrapper implements ArrayAccess {
         $this->prefix = $prefix;
 
         if ($persistent_id !== null) {
-            // not sure if null has the same behavior as not passing it
             $this->mc = new Memcached($persistent_id);
         } else {
             $this->mc = new Memcached();
         }
     }
 
-    public static function __callStatic($name, $args) {
-        return call_user_func_array(array($this->mc, $name), $args);
-    }
-
     public function __call($name, $args) {
+        if (!is_callable(array($this->mc, $name))) {
+            throw new MemcachedWrapperError("Unknown method: $name");
+        }
+        
         // find the position of the argument with key(s), if any
-        if (isset($this->methods[$name])) {
-            $pos = $this->methods[$name];
+        if (isset($this->keyArgMethods[$name])) {
+            $pos = $this->keyArgMethods[$name];
 
             // prepend prefix to key(s)
-            if (strpos($name, 'Multi') !== false ||
-                strpos($name, 'Delayed' !== false))
-            {
+            if (strpos($name, 'setMulti') !== false) {
                 $new = array();
                 foreach ($args[$pos] as $k => $v) {
                     $new[$this->prefix . $k] = $v;
                 }
                 $args[$pos] = $new;
+            } else if (strpos($name, 'Multi') !== false ||
+                       strpos($name, 'Delayed') !== false)
+            {
+                $new = array();
+                foreach ($args[$pos] as $k) {
+                    $new[] = $this->prefix . $k;
+                }
+                $args[$pos] = $new;
             } else {
                 $args[$pos] = $this->prefix . $args[$pos];
             }
+        }
 
+        $result = call_user_func_array(array($this->mc, $name), $args);
+
+        // process keys in return value if necessary
+        $prefix = $this->prefix;
+        $process = function ($r) use ($prefix) {
+            $r['key'] = substr($r['key'], strlen($prefix)); 
+            return $r;
+        };
+
+        if ($name == 'fetch' && is_array($result)) {
+            return $process($result);
+        } else if ($name == 'fetchAll' && is_array($result)) {
+            return array_map($process, $result);
+        } else if (strpos($name, 'getMulti') === 0 && is_array($result)) {
+            $new = array();
+            foreach ($result as $k => $v) {
+                $new[substr($k, strlen($this->prefix))] = $v;
+            }
+            return $new;
+        } else {
+            return $result;
         }
         
-        return call_user_func_array(array($this->mc, $name), $args);
     }
 
     public function offsetExists($offset) {
