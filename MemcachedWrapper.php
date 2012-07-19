@@ -98,9 +98,9 @@ class MemcachedWrapper implements ArrayAccess {
         $result = call_user_func_array(array($this->mc, $name), $args);
 
         // process keys in return value if necessary
-        $prefix = $this->prefix;
-        $process = function ($r) use ($prefix) {
-            $r['key'] = substr($r['key'], strlen($prefix)); 
+        $prefixLen = strlen($this->prefix);
+        $process = function ($r) use ($prefixLen) {
+            $r['key'] = substr($r['key'], $prefixLen); 
             return $r;
         };
 
